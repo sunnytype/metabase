@@ -726,7 +726,7 @@ describe("smoketest > admin_setup", () => {
       cy.icon("close")
         .last()
         .click();
-      cy.findByText("Curate collection").click();
+      cy.findByText("Edit collection").click();
 
       cy.findByText("Save").click();
 
@@ -757,7 +757,7 @@ describe("smoketest > admin_setup", () => {
       cy.icon("close")
         .last()
         .click();
-      cy.findByText("Curate collection").click();
+      cy.findByText("Edit collection").click();
       // Revoke Marketing access to sub-collection
       cy.icon("check")
         .last()

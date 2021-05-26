@@ -497,7 +497,7 @@
 
 (s/defn perms-for-archiving :- #{perms/ObjectPath}
   "Return the set of Permissions needed to archive or unarchive a `collection`. Since archiving a Collection is
-  *recursive* (i.e., it applies to all the descendant Collections of that Collection), we require write ('curate')
+  *recursive* (i.e., it applies to all the descendant Collections of that Collection), we require write ('edit')
   permissions for the Collection itself and all its descendants, but not for its parent Collection.
 
   For example, suppose we have a Collection hierarchy like:
@@ -514,7 +514,7 @@
   (when (collection.root/is-root-collection? collection)
     (throw (Exception. (tru "You cannot archive the Root Collection."))))
   ;; also make sure we're not trying to archive a PERSONAL Collection
-  (when (db/exists? Collection :id (u/get-id collection), :personal_owner_id [:not= nil])
+  (when (db/exists? Collection :id (u/the-id collection), :personal_owner_id [:not= nil])
     (throw (Exception. (tru "You cannot archive a Personal Collection."))))
   (set
    (for [collection-or-id (cons
@@ -665,7 +665,7 @@
 
 (defn- copy-parent-permissions!
   "When creating a new Collection, we shall copy the Permissions entries for its parent. That way, Groups who can see
-  its parent can see it; and Groups who can 'curate' (write) its parent can 'curate' it, as a default state. (Of
+  its parent can see it; and Groups who can edit (write) its parent can edit it, as a default state. (Of
   course, admins can change these permissions after the fact.)
 
   This does *not* apply to Collections that are created inside a Personal Collection or one of its descendants.
@@ -741,7 +741,7 @@
 (s/defn ^:private grant-perms-when-moving-out-of-personal-collection!
   "When moving a descendant of a Personal Collection into the Root Collection, or some other Collection not descended
   from a Personal Collection, we need to grant it Permissions, since now that it has moved across the boundary into
-  impersonal-land it *requires* Permissions to be seen or 'curated'. If we did not grant Permissions when moving, it
+  impersonal-land it *requires* Permissions to be seen or edited. If we did not grant Permissions when moving, it
   would immediately become invisible to all save admins, because no Group would have perms for it. This is obviously a
   bad experience -- we do not want a User to move a Collection that they have read/write perms for (by definition) to
   somewhere else and lose all access for it."
