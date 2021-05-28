@@ -239,20 +239,27 @@
 
 (deftest collection-path-test
   (doseq [[perms-type f-symb] {:read      'collection-read-path
-                               :readwrite 'collection-readwrite-path}
+                               :readwrite 'collection-readwrite-path
+                               :moderate  'collection-moderate-path}
           :let                [f (ns-resolve 'metabase.models.permissions f-symb)]]
     (doseq [[input expected]
-            {1                                                        {:read      "/collection/1/read/"
+            {1                                                        {:moderate  "/collection/1/moderate/"
+                                                                       :read      "/collection/1/read/"
                                                                        :readwrite "/collection/1/"}
-             {:id 1}                                                  {:read      "/collection/1/read/"
+             {:id 1}                                                  {:moderate  "/collection/1/moderate/"
+                                                                       :read      "/collection/1/read/"
                                                                        :readwrite "/collection/1/"}
-             collection/root-collection                               {:read      "/collection/root/read/"
+             collection/root-collection                               {:moderate  "/collection/root/moderate/"
+                                                                       :read      "/collection/root/read/"
                                                                        :readwrite "/collection/root/"}
-             (assoc collection/root-collection :namespace "snippets") {:read      "/collection/namespace/snippets/root/read/"
+             (assoc collection/root-collection :namespace "snippets") {:moderate  "/collection/namespace/snippets/root/moderate/"
+                                                                       :read      "/collection/namespace/snippets/root/read/"
                                                                        :readwrite "/collection/namespace/snippets/root/"}
-             (assoc collection/root-collection :namespace "a/b")      {:read      "/collection/namespace/a\\/b/root/read/"
+             (assoc collection/root-collection :namespace "a/b")      {:moderate  "/collection/namespace/a\\/b/root/moderate/"
+                                                                       :read      "/collection/namespace/a\\/b/root/read/"
                                                                        :readwrite "/collection/namespace/a\\/b/root/"}
-             (assoc collection/root-collection :namespace :a/b)       {:read      "/collection/namespace/a\\/b/root/read/"
+             (assoc collection/root-collection :namespace :a/b)       {:moderate  "/collection/namespace/a\\/b/root/moderate/"
+                                                                       :read      "/collection/namespace/a\\/b/root/read/"
                                                                        :readwrite "/collection/namespace/a\\/b/root/"}}
             :let [expected (get expected perms-type)]]
       (testing (pr-str (list f-symb input))
@@ -503,10 +510,12 @@
 ;;; ------------------------------------ perms-objects-set-for-parent-collection -------------------------------------
 
 (deftest perms-objects-set-for-parent-collection-test
-  (doseq [[input expected] {[{:collection_id 1337} :read]  #{"/collection/1337/read/"}
-                            [{:collection_id 1337} :write] #{"/collection/1337/"}
-                            [{:collection_id nil} :read]   #{"/collection/root/read/"}
-                            [{:collection_id nil} :write]  #{"/collection/root/"}}]
+  (doseq [[input expected] {[{:collection_id 1337} :moderate] #{"/collection/1337/moderate/"}
+                            [{:collection_id 1337} :read]     #{"/collection/1337/read/"}
+                            [{:collection_id 1337} :write]    #{"/collection/1337/"}
+                            [{:collection_id nil} :moderate]  #{"/collection/root/moderate/"}
+                            [{:collection_id nil} :read]      #{"/collection/root/read/"}
+                            [{:collection_id nil} :write]     #{"/collection/root/"}}]
     (testing (pr-str (cons 'perms-objects-set-for-parent-collection input))
       (is (= expected
              (apply perms/perms-objects-set-for-parent-collection input)))))
@@ -534,7 +543,7 @@
 ;;; +----------------------------------------------------------------------------------------------------------------+
 
 (defn- test-data-graph [group]
-  (get-in (perms/graph) [:groups (u/get-id group) (mt/id) :schemas "PUBLIC"]))
+  (get-in (perms/graph) [:groups (u/the-id group) (mt/id) :schemas "PUBLIC"]))
 
 (deftest graph-set-partial-permissions-for-table-test
   (testing "Test that setting partial permissions for a table retains permissions for other tables -- #3888"
@@ -547,7 +556,7 @@
       (testing "after"
         ;; next, grant permissions via `update-graph!` for CATEGORIES as well. Make sure permissions for VENUES are
         ;; retained (#3888)
-        (perms/update-graph! [(u/get-id group) (mt/id) :schemas "PUBLIC" (mt/id :categories)] :all)
+        (perms/update-graph! [(u/the-id group) (mt/id) :schemas "PUBLIC" (mt/id :categories)] :all)
         (is (= {(mt/id :categories) :all, (mt/id :venues) :all}
                (test-data-graph group)))))))
 
@@ -555,13 +564,13 @@
   (testing "Make sure that the graph functions work correctly for DBs with no schemas (#4000)"
     (mt/with-temp* [PermissionsGroup [group]
                     Database         [database]
-                    Table            [table    {:db_id (u/get-id database)}]]
+                    Table            [table    {:db_id (u/the-id database)}]]
       ;; try to grant idential permissions to the table twice
-      (perms/update-graph! [(u/get-id group) (u/get-id database) :schemas] {"" {(u/get-id table) :all}})
-      (perms/update-graph! [(u/get-id group) (u/get-id database) :schemas] {"" {(u/get-id table) :all}})
+      (perms/update-graph! [(u/the-id group) (u/the-id database) :schemas] {"" {(u/the-id table) :all}})
+      (perms/update-graph! [(u/the-id group) (u/the-id database) :schemas] {"" {(u/the-id table) :all}})
       ;; now fetch the perms that have been granted
-      (is (= {"" {(u/get-id table) :all}}
-             (get-in (perms/graph) [:groups (u/get-id group) (u/get-id database) :schemas]))))))
+      (is (= {"" {(u/the-id table) :all}}
+             (get-in (perms/graph) [:groups (u/the-id group) (u/the-id database) :schemas]))))))
 
 (deftest metabot-graph-test
   (testing (str "The data permissions graph should never return permissions for the MetaBot, because the MetaBot can "
@@ -569,9 +578,9 @@
     ;; need to swap out the perms check function because otherwise we couldn't even insert the object we want to insert
     (with-redefs [perms/assert-valid-metabot-permissions (constantly nil)]
       (mt/with-temp* [Database    [db]
-                      Permissions [perms {:group_id (u/get-id (group/metabot)), :object (perms/object-path db)}]]
+                      Permissions [perms {:group_id (u/the-id (group/metabot)), :object (perms/object-path db)}]]
         (is (= false
-               (contains? (:groups (perms/graph)) (u/get-id (group/metabot)))))))))
+               (contains? (:groups (perms/graph)) (u/the-id (group/metabot)))))))))
 
 (deftest broken-out-read-query-perms-in-graph-test
   (testing "Make sure we can set the new broken-out read/query perms for a Table and the graph works as we'd expect"
@@ -586,7 +595,7 @@
              (test-data-graph group))))
 
     (mt/with-temp PermissionsGroup [group]
-      (perms/update-graph! [(u/get-id group) (mt/id) :schemas]
+      (perms/update-graph! [(u/the-id group) (mt/id) :schemas]
                            {"PUBLIC"
                             {(mt/id :venues)
                              {:read :all, :query :segmented}}})
@@ -614,7 +623,7 @@
     (is (thrown? Exception
                  (perms/revoke-collection-permissions!
                   (group/all-users)
-                  (u/get-id (db/select-one Collection :personal_owner_id (mt/user->id :lucky))))))
+                  (u/the-id (db/select-one Collection :personal_owner_id (mt/user->id :lucky))))))
 
     (testing "(should apply to descendants as well)"
       (mt/with-temp Collection [collection {:location (collection/children-location
@@ -641,7 +650,7 @@
         (is (thrown?
              Exception
              (f (group/all-users)
-                (u/get-id (db/select-one Collection :personal_owner_id (mt/user->id :lucky))))))
+                (u/the-id (db/select-one Collection :personal_owner_id (mt/user->id :lucky))))))
 
         (testing "(should apply to descendants as well)"
           (is (thrown?

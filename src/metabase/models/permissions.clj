@@ -77,18 +77,27 @@
                     (or
                      ;; /collection/:id/ -> readwrite perms for a specific Collection
                      (and #"\d+/"
-                          ;; /collection/:id/read/ -> read perms for a specific Collection
-                          (opt "read/"))
+                          ;; /collection/:id/read/     -> read perms for a specific Collection
+                          ;; /collection/:id/moderate/ -> moderate perms for a specific Collection
+                          (opt
+                           (or
+                            "moderate/"
+                            "read/")))
                      ;; /collection/root/ -> readwrite perms for the Root Collection
                      (and "root/"
-                          ;; /collection/root/read/ -> read perms for the Root Collection
-                          (opt "read/"))
+                          ;; /collection/root/read/     -> read perms for the Root Collection
+                          ;; /collection/root/moderate/ -> moderate perms for the Root Collection
+                          (opt
+                           (or "moderate/"
+                               "read/")))
                      ;; /collection/namespace/:namespace/root/ -> readwrite perms for 'Root' Collection in non-default
                      ;; namespace (only really used for EE)
                      (and "namespace/" path-char "+/root/"
                           ;; /collection/namespace/:namespace/root/read/ -> read perms for 'Root' Collection in
                           ;; non-default namespace
-                          (opt "read/")))))
+                          (opt
+                           (or "moderate/"
+                               "read/"))))))
               "$"))
 
 (def segmented-perm-regex
@@ -109,9 +118,9 @@
   "Does `object-path` follow a known, allowed format to an *object*? (The root path, \"/\", is not considered an object;
   this returns `false` for it)."
   ^Boolean [^String object-path]
-  (boolean (when (and (string? object-path)
-                      (seq object-path))
-             (re-matches valid-object-path-regex object-path))))
+  (boolean (and (string? object-path)
+                (seq object-path)
+                (re-matches valid-object-path-regex object-path))))
 
 (def ObjectPath
   "Schema for a valid permissions path to an object."
@@ -170,13 +179,13 @@
   schemas don't have separate `read/` and write permissions; you either have 'data access' permissions for them, or
   you don't. Tables, however, have separate read and write perms.)"
   ([database-or-id :- MapOrID]
-   (str "/db/" (u/get-id database-or-id) "/"))
+   (str "/db/" (u/the-id database-or-id) "/"))
 
   ([database-or-id :- MapOrID, schema-name :- (s/maybe s/Str)]
    (str (object-path database-or-id) "schema/" (escape-path-component schema-name) "/"))
 
   ([database-or-id :- MapOrID, schema-name :- (s/maybe s/Str), table-or-id :- MapOrID]
-   (str (object-path database-or-id schema-name) "table/" (u/get-id table-or-id) "/" )))
+   (str (object-path database-or-id schema-name) "table/" (u/the-id table-or-id) "/" )))
 
 (s/defn adhoc-native-query-path :- ObjectPath
   "Return the native query read/write permissions path for a database.
@@ -193,10 +202,15 @@
   "Return the permissions path for *readwrite* access for a `collection-or-id`."
   [collection-or-id :- MapOrID]
   (if-not (get collection-or-id :metabase.models.collection.root/is-root?)
-    (format "/collection/%d/" (u/get-id collection-or-id))
+    (format "/collection/%d/" (u/the-id collection-or-id))
     (if-let [collection-namespace (:namespace collection-or-id)]
       (format "/collection/namespace/%s/root/" (escape-path-component (u/qualified-name collection-namespace)))
       "/collection/root/")))
+
+(s/defn collection-moderate-path :- ObjectPath
+  "Return the permissions path for *moderate* access for a `collection-or-id`."
+  [collection-or-id :- MapOrID]
+  (str (collection-readwrite-path collection-or-id) "moderate/"))
 
 (s/defn collection-read-path :- ObjectPath
   "Return the permissions path for *read* access for a `collection-or-id`."
@@ -210,7 +224,7 @@
 
   ([database-or-id schema-name table-or-id]
    {:post [(valid-object-path? %)]}
-   (str (object-path (u/get-id database-or-id) schema-name (u/get-id table-or-id)) "read/")))
+   (str (object-path (u/the-id database-or-id) schema-name (u/the-id table-or-id)) "read/")))
 
 (s/defn table-query-path :- ObjectPath
   "Return the permissions path for *full* query access for a Table. Full query access means you can run any (MBQL) query
@@ -219,7 +233,7 @@
    (table-query-path (:db_id table) (:schema table) table))
 
   ([database-or-id schema-name table-or-id]
-   (str (object-path (u/get-id database-or-id) schema-name (u/get-id table-or-id)) "query/")))
+   (str (object-path (u/the-id database-or-id) schema-name (u/the-id table-or-id)) "query/")))
 
 (s/defn table-segmented-query-path :- ObjectPath
   "Return the permissions path for *segmented* query access for a Table. Segmented access means running queries against
@@ -229,7 +243,7 @@
    (table-segmented-query-path (:db_id table) (:schema table) table))
 
   ([database-or-id schema-name table-or-id]
-   (str (object-path (u/get-id database-or-id) schema-name (u/get-id table-or-id)) "query/segmented/")))
+   (str (object-path (u/the-id database-or-id) schema-name (u/the-id table-or-id)) "query/segmented/")))
 
 
 ;;; -------------------------------------------- Permissions Checking Fns --------------------------------------------
@@ -281,16 +295,17 @@
   "Implementation of `IModel` `perms-objects-set` for models with a `collection_id`, such as Card, Dashboard, or Pulse.
   This simply returns the `perms-objects-set` of the parent Collection (based on `collection_id`), or for the Root
   Collection if `collection_id` is `nil`."
-  ([this read-or-write]
-   (perms-objects-set-for-parent-collection nil this read-or-write))
+  ([this permission-type]
+   (perms-objects-set-for-parent-collection nil this permission-type))
 
   ([collection-namespace :- (s/maybe su/KeywordOrString)
     this                 :- {:collection_id (s/maybe su/IntGreaterThanZero), s/Keyword s/Any}
-    read-or-write        :- (s/enum :read :write)]
+    read-or-write        :- (s/enum :read :write :moderate)]
    ;; based on value of read-or-write determine the approprite function used to calculate the perms path
    (let [path-fn (case read-or-write
-                   :read  collection-read-path
-                   :write collection-readwrite-path)]
+                   :read     collection-read-path
+                   :write    collection-readwrite-path
+                   :moderate collection-moderate-path)]
      ;; now pass that function our collection_id if we have one, or if not, pass it an object representing the Root
      ;; Collection
      #{(path-fn (or (:collection_id this)
@@ -307,6 +322,7 @@
          ;; up with a good name for the Mixin. - Cam)
          {:can-read?         (partial i/current-user-has-full-permissions? :read)
           :can-write?        (partial i/current-user-has-full-permissions? :write)
+          :can-moderate?     (partial i/current-user-has-full-permissions? :moderate)
           :perms-objects-set perms-objects-set-for-parent-collection}))
 
 
@@ -470,13 +486,13 @@
   [group-or-id :- (s/cond-pre su/Map su/IntGreaterThanZero), path :- ObjectPath, & other-conditions]
   (let [where {:where (apply list
                              :and
-                             [:= :group_id (u/get-id group-or-id)]
+                             [:= :group_id (u/the-id group-or-id)]
                              [:or
                               [:like path (hx/concat :object (hx/literal "%"))]
                               [:like :object (str path "%")]]
                              other-conditions)}]
     (when-let [revoked (db/select-field :object Permissions where)]
-      (log/debug (u/format-color 'red "Revoking permissions for group %d: %s" (u/get-id group-or-id) revoked))
+      (log/debug (u/format-color 'red "Revoking permissions for group %d: %s" (u/the-id group-or-id) revoked))
       (db/delete! Permissions where))))
 
 (defn revoke-permissions!
@@ -498,7 +514,7 @@
   ([group-or-id path]
    (try
      (db/insert! Permissions
-       :group_id (u/get-id group-or-id)
+       :group_id (u/the-id group-or-id)
        :object   path)
      ;; on some occasions through weirdness we might accidentally try to insert a key that's already been inserted
      (catch Throwable e
@@ -553,8 +569,8 @@
     ;; ok, once we've confirmed this isn't the Root Collection, see if it's in the DB with a personal_owner_id
     (let [collection (if (map? collection-or-id)
                        collection-or-id
-                       (or (db/select-one 'Collection :id (u/get-id collection-or-id))
-                           (throw (ex-info (tru "Collection does not exist.") {:collection-id (u/get-id collection-or-id)}))))]
+                       (or (db/select-one 'Collection :id (u/the-id collection-or-id))
+                           (throw (ex-info (tru "Collection does not exist.") {:collection-id (u/the-id collection-or-id)}))))]
       (when (is-personal-collection-or-descendant-of-one? collection)
         (throw (Exception. (tru "You cannot edit permissions for a Personal Collection or its descendants.")))))))
 
@@ -564,17 +580,24 @@
   (check-not-personal-collection-or-descendant collection-or-id)
   (delete-related-permissions! group-or-id (collection-readwrite-path collection-or-id)))
 
+(s/defn grant-collection-moderate-permissions!
+  "Grant moderate access to a Collection, which means a user can verify or flag items in the collection, view all
+  Cards, and add/remove Cards."
+  [group-or-id :- MapOrID collection-or-id :- MapOrID]
+  (check-not-personal-collection-or-descendant collection-or-id)
+  (grant-permissions! (u/the-id group-or-id) (collection-moderate-path collection-or-id)))
+
 (s/defn grant-collection-readwrite-permissions!
   "Grant full access to a Collection, which means a user can view all Cards in the Collection and add/remove Cards."
   [group-or-id :- MapOrID collection-or-id :- MapOrID]
   (check-not-personal-collection-or-descendant collection-or-id)
-  (grant-permissions! (u/get-id group-or-id) (collection-readwrite-path collection-or-id)))
+  (grant-permissions! (u/the-id group-or-id) (collection-readwrite-path collection-or-id)))
 
 (s/defn grant-collection-read-permissions!
   "Grant read access to a Collection, which means a user can view all Cards in the Collection."
   [group-or-id :- MapOrID collection-or-id :- MapOrID]
   (check-not-personal-collection-or-descendant collection-or-id)
-  (grant-permissions! (u/get-id group-or-id) (collection-read-path collection-or-id)))
+  (grant-permissions! (u/the-id group-or-id) (collection-read-path collection-or-id)))
 
 
 ;;; ----------------------------------------------- Graph Updating Fns -----------------------------------------------
