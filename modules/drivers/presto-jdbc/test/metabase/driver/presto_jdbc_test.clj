@@ -4,6 +4,8 @@
             [metabase.db.metadata-queries :as metadata-queries]
             [metabase.driver :as driver]
             [metabase.driver.sql.query-processor :as sql.qp]
+            [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
+            [metabase.driver.util :as driver.u]
             [metabase.models.database :refer [Database]]
             [metabase.models.field :refer [Field]]
             [metabase.models.table :as table :refer [Table]]
@@ -254,3 +256,20 @@
                                    (test-sensitive-info-not-included response))))]
                     (testing "server logs should not include sensitive info"
                       (test-sensitive-info-not-included logs)))))))))))
+
+(deftest kerberos-properties-test
+  (testing "Kerberos related properties are set correctly"
+    (let [details {:host                         "presto-server"
+                   :port                         7778
+                   :catalog                      "my-catalog"
+                   :kerberos                     true
+                   :ssl                          true
+                   :kerberos-config-path         "/path/to/krb5.conf"
+                   :kerberos-principal           "alice@DOMAIN.COM"
+                   :kerberos-remote-service-name "HTTP"
+                   :kerberos-keytab-path         "/path/to/client.keytab"}
+          jdbc-spec (sql-jdbc.conn/connection-details->spec :presto-jdbc details)]
+      (is (= (str "//presto-server:7778/my-catalog?KerberosPrincipal=alice@DOMAIN.COM"
+                  "&KerberosRemoteServiceName=HTTP&KerberosKeytabPath=/path/to/client.keytab"
+                  "&KerberosConfigPath=/path/to/krb5.conf")
+             (:subname jdbc-spec))))))

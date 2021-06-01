@@ -1,0 +1,101 @@
+name: Kerberized Presto Integration Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - 'release**'
+      - 'feature**'
+    tags:
+      - '**'
+    paths:
+    - '**/presto_jdbc/**'
+    - '**/presto_jdbc.clj'
+
+jobs:
+
+  ensure-mba:
+    # TODO: build some custom Docker image that pre-installs openjdk, babashka, docker-compose, etc.
+    runs-on: ubuntu-20.04
+    timeout-minutes: 40
+    steps:
+      - name: Put MBA on Path
+        run: sudo ln -s $(pwd)/mba/src/main.clj /usr/local/bin/mba
+
+  run-presto-kerberos-test:
+    # TODO: build some custom Docker image that pre-installs openjdk, babashka, docker-compose, etc.
+    runs-on: ubuntu-20.04
+    container: metabase/presto-kerberos-mb-ci # your docker image
+    timeout-minutes: 40
+    needs: ensure-mba
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check out Presto Kerberos Docker Compose
+        uses: actions/checkout@master
+        with:
+          # TODO: fork this to metabase if everything works out
+          repository: mik-laj/presto-kerberos-docker
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: presto-kerberos-docker
+      - name: Bring up Presto+Kerberos cluster
+        run: cd presto-kerberos-docker && docker-compose up -d
+      - name: Run Presto test query from command line
+        run: cd presto-kerberos-docker && ./test.sh
+      - name: Capture Presto server CA
+        run: openssl s_client -connect localhost:37778 2>/dev/null </dev/null | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' > resources/presto-ssl-root-ca.pem
+      - name: Convert root CA from PEM to DER
+        run: >
+          openssl x509 -outform der -in resources/presto-ssl-root-ca.pem
+          -out resources/presto-ssl-root-ca.der
+      - name: Copy OpenJDK 8 root truststore to resources
+        run: >
+          cp /usr/lib/jvm/java-8-openjdk-amd64/jre/lib/security/cacerts resources/cacerts-with-presto-ca.jks
+      - name: Copy Presto SSL keystore to resources
+        run: docker cp presto-kerberos:/tmp/ssl_keystore.jks resources
+      - name: Copy krb5.conf file to resources
+        run: docker cp presto-kerberos:/etc/krb5.conf resources
+      - name: Copy client.keytab file to resources
+        run: docker cp presto-kerberos:/home/presto/client.keytab resources
+      - name: Add Presto root CA to truststore
+        run: >
+          keytool -noprompt -import -alias presto-kerberos -keystore resources/cacerts-with-presto-ca.jks
+          -storepass changeit -file resources/presto-ssl-root-ca.der -trustcacerts
+      - name: Run Metabase via MBA
+        run: mba --mb . --data-db postgres-data -n example.com up
+      - name: Run tests in MBA instance
+        run: >
+          mba --mb . --data-db postgres-data -n example.com \
+           --env DRIVERS=presto-jdbc \
+           --env MB_ENABLE_PRESTO_JDBC_DRIVER=true \
+           --env MB_PRESTO_JDBC_TEST_HOST=presto-kerberos \
+           --env MB_PRESTO_JDBC_TEST_PORT=7778 \
+           --env MB_PRESTO_JDBC_TEST_SSL=true \
+           --env MB_PRESTO_JDBC_TEST_KERBEROS=true \
+           --env MB_PRESTO_JDBC_TEST_USER=bob@EXAMPLE.COM \
+           --env MB_PRESTO_JDBC_TEST_KERBEROS_PRINCIPAL=bob@EXAMPLE.COM \
+           --env MB_PRESTO_JDBC_TEST_KERBEROS_KEYTAB_PATH=/app/source/resources/client.keytab \
+           --env MB_PRESTO_JDBC_TEST_KERBEROS_CONFIG_PATH=/app/source/resources/krb5.conf \
+           --env MB_PRESTO_JDBC_TEST_KERBEROS_ADDITIONAL_OPTIONS="
+            -Djavax.net.ssl.keyStore=/app/source/resources/ssl_keystore.jks
+            -Djavax.net.ssl.keyStorePassword=presto
+            -Djavax.net.ssl.trustStore=/app/source/resources/cacerts-with-presto-ca.jks
+            -Djavax.net.ssl.trustStorePassword=changeit" \
+           run lein test
+
+
+  checkout-test:
+    # TODO: build some custom Docker image that pre-installs openjdk, babashka, docker-compose, etc.
+    runs-on: ubuntu-20.04
+    timeout-minutes: 40
+    steps:
+      - name: Clone MBA
+        uses: actions/checkout@master
+        with:
+          repository: metabase/mba
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+          path: mba-clone
