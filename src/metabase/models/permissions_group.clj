@@ -100,9 +100,9 @@
 
 (u/strict-extend (class PermissionsGroup)
   models/IModel (merge models/IModelDefaults
-                   {:pre-delete pre-delete
-                    :pre-insert         pre-insert
-                    :pre-update         pre-update}))
+                       {:pre-delete pre-delete
+                        :pre-insert pre-insert
+                        :pre-update pre-update}))
 
 
 ;;; ---------------------------------------------------- Util Fns ----------------------------------------------------
@@ -119,6 +119,6 @@
              :from      [[:core_user :user]]
              :left-join [[:permissions_group_membership :pgm] [:= :user.id :pgm.user_id]]
              :where     [:and [:= :user.is_active true]
-                              [:= :pgm.group_id (u/get-id group-or-id)]]
+                              [:= :pgm.group_id (u/the-id group-or-id)]]
              :order-by  [[:%lower.user.first_name :asc]
                          [:%lower.user.last_name :asc]]}))
