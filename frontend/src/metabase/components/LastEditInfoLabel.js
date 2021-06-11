@@ -52,9 +52,9 @@ function LastEditInfoLabel({ item, user, ...props }) {
   return (
     <div>
       <Label {...props}>{t`Edited ${time} by ${editor}`}</Label>
-      <p>{`NOW: ${moment().format("DD MMMM YYYY")} | EDIT: ${moment(
+      <p>{`NOW: ${moment().format("DD MMMM YYYY HH:MM")} | EDIT: ${moment(
         timestamp,
-      ).format("DD MMMM YYYY")}`}</p>
+      ).format("DD MMMM YYYY HH:MM")}`}</p>
     </div>
   );
 }
