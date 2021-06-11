@@ -49,7 +49,14 @@ function LastEditInfoLabel({ item, user, ...props }) {
   const editor =
     editorId === user.id ? "you" : formatEditorName(first_name, last_name);
 
-  return <Label {...props}>{t`Edited ${time} by ${editor}`}</Label>;
+  return (
+    <div>
+      <Label {...props}>{t`Edited ${time} by ${editor}`}</Label>
+      <p>{`NOW: ${moment().format("DD MMMM YYYY")} | EDIT: ${moment(
+        timestamp,
+      ).format("DD MMMM YYYY")}`}</p>
+    </div>
+  );
 }
 
 export default connect(mapStateToProps)(LastEditInfoLabel);

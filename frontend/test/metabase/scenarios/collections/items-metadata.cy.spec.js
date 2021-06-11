@@ -43,6 +43,7 @@ describe("scenarios > collection items metadata", () => {
       testCases.forEach(testCase => {
         const { date, expected } = testCase;
         cy.clock(date.valueOf());
+        cy.log(`Set date ${moment(date).format("DD MMMM YYYY")}`);
         cy.reload();
         cy.wait("@getDashboard");
         cy.findByText(expected);
@@ -59,6 +60,7 @@ describe("scenarios > collection items metadata", () => {
       testCases.forEach(testCase => {
         const { date, expected } = testCase;
         cy.clock(date.valueOf());
+        cy.log(`Set date ${moment(date).format("DD MMMM YYYY")}`);
         cy.reload();
         cy.wait("@getQuestion");
         cy.findByText(expected);
